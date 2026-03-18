@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mirror the webcam so it feels like a mirror, not reversed */
+.mirror {
+  transform: scaleX(-1);
+}
