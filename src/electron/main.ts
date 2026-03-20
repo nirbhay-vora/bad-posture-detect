@@ -183,6 +183,13 @@ ipcMain.on('posture-update', (_event, data: {
   slouchSeconds: number
   cooldownSeconds: number
 }) => {
+  // percent === -1 means monitoring was turned off by user
+  if (data.percent === -1) {
+    slouchStartTime = null
+    restoreBrightness()
+    lastPosturePercent = 0
+    return
+  }
   lastPosturePercent = data.percent
   lastDeviationThreshold = data.deviationThreshold
   lastSlouchSeconds = data.slouchSeconds

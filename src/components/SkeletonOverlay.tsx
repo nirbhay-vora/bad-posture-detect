@@ -11,7 +11,7 @@ const CONNECTIONS = [
 
 interface Props {
   landmarks: NormalizedLandmark[] | null
-  status: 'good' | 'bad' | 'loading' | 'uncalibrated' | 'error'
+  status: 'good' | 'bad' | 'loading' | 'uncalibrated' | 'error' | 'paused'
 }
 
 export function SkeletonOverlay({ landmarks, status }: Props) {

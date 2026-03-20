@@ -11,7 +11,7 @@ const NOSE = 0
 const LEFT_SHOULDER = 11
 const RIGHT_SHOULDER = 12
 
-export type PostureStatus = 'loading' | 'uncalibrated' | 'good' | 'bad' | 'error'
+export type PostureStatus = 'loading' | 'uncalibrated' | 'good' | 'bad' | 'error' | 'paused'
 
 export interface Baseline {
   noseY: number
@@ -31,15 +31,13 @@ export function usePostureEngine(settings: Settings) {
   const rafRef = useRef<number>(0)
   const lastVideoTimeRef = useRef(-1)
   const lastTickRef = useRef<number>(Date.now())
-  const lastFrameTimeRef = useRef<number>(Date.now())
-  const settingsRef = useRef(settings) // ← always up-to-date settings without re-creating detectPosture
+  const settingsRef = useRef(settings)
+  const isMonitoringRef = useRef(true)
 
-  // Keep settingsRef in sync whenever settings change
-  useEffect(() => {
-    settingsRef.current = settings
-  }, [settings])
+  useEffect(() => { settingsRef.current = settings }, [settings])
 
   const [status, setStatus] = useState<PostureStatus>('loading')
+  const [isMonitoring, setIsMonitoring] = useState(true)
   const [baseline, setBaseline] = useState<Baseline | null>(null)
   const [slouchPercent, setSlouchPercent] = useState(0)
   const [landmarks, setLandmarks] = useState<NormalizedLandmark[] | null>(null)
@@ -71,6 +69,9 @@ export function usePostureEngine(settings: Settings) {
   }, [])
 
   const detectPosture = useCallback(() => {
+    // If monitoring turned off, stop the loop
+    if (!isMonitoringRef.current) return
+
     const video = videoRef.current
     const landmarker = landmarkerRef.current
 
@@ -102,18 +103,10 @@ export function usePostureEngine(settings: Settings) {
       const now = Date.now()
       const elapsed = (now - lastTickRef.current) / 1000
       lastTickRef.current = now
-      lastFrameTimeRef.current = now
 
       const { deviationThreshold, slouchSeconds, cooldownSeconds } = settingsRef.current
 
-      // Send posture data to main process every frame
-      // Main process handles alerts/dim even when window is hidden
-      window.electronAPI?.postureUpdate({
-        percent: percentage,
-        deviationThreshold,
-        slouchSeconds,
-        cooldownSeconds
-      })
+      window.electronAPI?.postureUpdate({ percent: percentage, deviationThreshold, slouchSeconds, cooldownSeconds })
 
       if (percentage > deviationThreshold) {
         setStats(s => ({ ...s, badSeconds: s.badSeconds + elapsed }))
@@ -127,7 +120,16 @@ export function usePostureEngine(settings: Settings) {
     }
 
     rafRef.current = requestAnimationFrame(detectPosture)
-  }, [baseline]) // only re-create when baseline changes, not settings
+  }, [baseline])
+
+  const stopCamera = useCallback(() => {
+    cancelAnimationFrame(rafRef.current)
+    const video = videoRef.current
+    if (video?.srcObject) {
+      (video.srcObject as MediaStream).getTracks().forEach(t => t.stop())
+      video.srcObject = null
+    }
+  }, [])
 
   const startCamera = useCallback(async () => {
     try {
@@ -173,13 +175,35 @@ export function usePostureEngine(settings: Settings) {
     setStats({ goodSeconds: 0, badSeconds: 0, alertCount: 0 })
   }, [])
 
+  const toggleMonitoring = useCallback(() => {
+    const next = !isMonitoringRef.current
+    isMonitoringRef.current = next
+    setIsMonitoring(next)
+
+    if (!next) {
+      // Turn OFF — stop camera, reset UI, notify main process
+      stopCamera()
+      setSlouchPercent(0)
+      setLandmarks(null)
+      setStatus('paused')
+      window.electronAPI?.postureUpdate({ percent: -1, deviationThreshold: 0, slouchSeconds: 0, cooldownSeconds: 0 })
+    } else {
+      // Turn ON — restart camera, reset tick so elapsed doesn't jump
+      lastTickRef.current = Date.now()
+      setStatus(baseline ? 'uncalibrated' : 'uncalibrated')
+      startCamera()
+    }
+  }, [baseline, startCamera, stopCamera])
+
   useEffect(() => {
     const saved = localStorage.getItem('ergovision-baseline')
     if (saved) setBaseline(JSON.parse(saved))
   }, [])
 
   useEffect(() => {
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+    return () => {
+      cancelAnimationFrame(rafRef.current)
+    }
   }, [])
 
   return {
@@ -189,8 +213,10 @@ export function usePostureEngine(settings: Settings) {
     slouchPercent,
     landmarks,
     stats,
+    isMonitoring,
     startCamera,
     calibrate,
     resetStats,
+    toggleMonitoring,
   }
 }

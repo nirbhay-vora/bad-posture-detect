@@ -13,6 +13,7 @@ function getStatusConfig(status: PostureStatus) {
     case 'good':         return { label: 'Good Posture ✓', color: 'text-green-400', bg: 'bg-green-900/30', icon: CheckCircle }
     case 'bad':          return { label: 'Bad Posture!', color: 'text-red-400', bg: 'bg-red-900/30', icon: AlertTriangle }
     case 'error':        return { label: 'Error — Check Console', color: 'text-red-500', bg: 'bg-red-950', icon: AlertTriangle }
+    case 'paused':       return { label: 'Monitoring Paused', color: 'text-slate-400', bg: 'bg-slate-800', icon: Loader }
   }
 }
 
@@ -20,14 +21,14 @@ type Tab = 'monitor' | 'stats' | 'settings'
 
 export function Dashboard() {
   const { settings, updateSettings } = useSettings()
-  const { videoRef, status, baseline, slouchPercent, landmarks, stats, startCamera, calibrate, resetStats } = usePostureEngine(settings)
+  const { videoRef, status, baseline, slouchPercent, landmarks, stats, isMonitoring, startCamera, calibrate, resetStats, toggleMonitoring } = usePostureEngine(settings)
   const [tab, setTab] = useState<Tab>('monitor')
 
   useEffect(() => { startCamera() }, [startCamera])
 
   const config = getStatusConfig(status)
   const StatusIcon = config.icon
-  const healthPercent = Math.max(0, Math.min(100, 100 - slouchPercent))
+  const healthPercent = isMonitoring ? Math.max(0, Math.min(100, 100 - slouchPercent)) : 0
   const radius = 54
   const circumference = 2 * Math.PI * radius
   const strokeDashoffset = circumference - (healthPercent / 100) * circumference
@@ -46,17 +47,32 @@ export function Dashboard() {
             <p className="text-slate-400 text-sm mt-1">Phase 2 — Posture Guardian</p>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-1 bg-slate-800 rounded-lg p-1">
-            {(['monitor', 'stats', 'settings'] as Tab[]).map(t => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium capitalize transition-colors ${tab === t ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
-              >
-                {t}
-              </button>
-            ))}
+          <div className="flex items-center gap-4">
+            {/* On/Off Toggle */}
+            <button
+              onClick={toggleMonitoring}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+                isMonitoring
+                  ? 'bg-green-600 hover:bg-green-500 text-white'
+                  : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${isMonitoring ? 'bg-green-300 animate-pulse' : 'bg-slate-500'}`} />
+              {isMonitoring ? 'Monitoring ON' : 'Monitoring OFF'}
+            </button>
+
+            {/* Tabs */}
+            <div className="flex gap-1 bg-slate-800 rounded-lg p-1">
+              {(['monitor', 'stats', 'settings'] as Tab[]).map(t => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium capitalize transition-colors ${tab === t ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -67,8 +83,15 @@ export function Dashboard() {
             {/* Left: Webcam + Skeleton */}
             <div className="space-y-4">
               <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700 aspect-video relative">
-                <video ref={videoRef} className="w-full h-full object-cover mirror" muted playsInline />
-                <SkeletonOverlay landmarks={landmarks} status={status} />
+                <video ref={videoRef} className={`w-full h-full object-cover mirror ${!isMonitoring ? 'invisible' : ''}`} muted playsInline />
+                {isMonitoring
+                  ? <SkeletonOverlay landmarks={landmarks} status={status} />
+                  : <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 gap-3">
+                      <span className="text-5xl">⏸</span>
+                      <p className="text-slate-400 text-sm">Monitoring is paused</p>
+                      <p className="text-slate-500 text-xs">Toggle ON to resume</p>
+                    </div>
+                }
                 <div className={`absolute bottom-3 left-3 px-3 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.color} flex items-center gap-1`}>
                   <StatusIcon size={12} />
                   {config.label}
@@ -108,7 +131,9 @@ export function Dashboard() {
                 <p className="text-slate-400 text-sm font-medium">Detection Details</p>
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-400">Slouch Deviation</span>
-                  <span className={slouchPercent > settings.deviationThreshold ? 'text-red-400 font-bold' : 'text-green-400'}>{slouchPercent}%</span>
+                  <span className={!isMonitoring ? 'text-slate-500' : slouchPercent > settings.deviationThreshold ? 'text-red-400 font-bold' : 'text-green-400'}>
+                    {isMonitoring ? `${slouchPercent}%` : '—'}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-400">Baseline Set</span>
