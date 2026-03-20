@@ -20,13 +20,7 @@ const NOSE = 0
 const LEFT_SHOULDER = 11
 const RIGHT_SHOULDER = 12
 
-// How many consecutive "bad" frames before we alert
-const SLOUCH_THRESHOLD = 300 // ~10 seconds at 30fps
-
-// How many frames to wait before allowing another notification
-const NOTIFY_COOLDOWN_FRAMES = 300 // ~10 seconds at 30fps
-
-export type PostureStatus = 'loading' | 'uncalibrated' | 'good' | 'bad' | 'error'
+export type PostureStatus = 'loading' | 'uncalibrated' | 'good' | 'bad' | 'error' | 'paused'
 
 export interface Baseline {
   noseY: number
@@ -48,9 +42,14 @@ export function usePostureEngine() {
   const slouchBufferRef = useRef(0)
   const cooldownRef = useRef(0)
   const lastVideoTimeRef = useRef(-1)
-  const isDimmedRef = useRef(false) // track whether screen is currently dimmed
+  const lastTickRef = useRef<number>(Date.now())
+  const settingsRef = useRef(settings)
+  const isMonitoringRef = useRef(true)
+
+  useEffect(() => { settingsRef.current = settings }, [settings])
 
   const [status, setStatus] = useState<PostureStatus>('loading')
+  const [isMonitoring, setIsMonitoring] = useState(true)
   const [baseline, setBaseline] = useState<Baseline | null>(null)
   const [slouchPercent, setSlouchPercent] = useState(0)
 
@@ -88,6 +87,9 @@ export function usePostureEngine() {
 
   // ─── Step 2: The main detection loop ────────────────────────────────────────
   const detectPosture = useCallback(() => {
+    // If monitoring turned off, stop the loop
+    if (!isMonitoringRef.current) return
+
     const video = videoRef.current
     const landmarker = landmarkerRef.current
 
@@ -135,11 +137,9 @@ export function usePostureEngine() {
 
       setSlouchPercent(Math.max(0, percentage))
 
-      if (percentage > 20) {
-        // ── Anti-Jitter: Slouch Buffer ──────────────────────────────────────
-        // We don't alert on a single bad frame.
-        // We increment a counter; only alert after 150 consecutive bad frames.
-        slouchBufferRef.current += 1
+      const now = Date.now()
+      const elapsed = (now - lastTickRef.current) / 1000
+      lastTickRef.current = now
 
         if (slouchBufferRef.current >= SLOUCH_THRESHOLD && cooldownRef.current === 0) {
           console.warn('🚨 BAD POSTURE detected!')
@@ -153,6 +153,10 @@ export function usePostureEngine() {
           slouchBufferRef.current = 0
         }
 
+      window.electronAPI?.postureUpdate({ percent: percentage, deviationThreshold, slouchSeconds, cooldownSeconds })
+
+      if (percentage > deviationThreshold) {
+        setStats(s => ({ ...s, badSeconds: s.badSeconds + elapsed }))
         setStatus('bad')
       } else {
         slouchBufferRef.current = 0
@@ -172,7 +176,16 @@ export function usePostureEngine() {
 
     // Schedule the next frame (this is what makes it a continuous loop)
     rafRef.current = requestAnimationFrame(detectPosture)
-  }, [baseline]) // Re-create this function whenever baseline changes
+  }, [baseline])
+
+  const stopCamera = useCallback(() => {
+    cancelAnimationFrame(rafRef.current)
+    const video = videoRef.current
+    if (video?.srcObject) {
+      (video.srcObject as MediaStream).getTracks().forEach(t => t.stop())
+      video.srcObject = null
+    }
+  }, [])
 
   // ─── Step 3: Start/stop camera and detection loop ───────────────────────────
   const startCamera = useCallback(async () => {
@@ -224,7 +237,30 @@ export function usePostureEngine() {
     setStatus('good')
   }, [])
 
-  // Load saved baseline from localStorage on startup
+  const resetStats = useCallback(() => {
+    setStats({ goodSeconds: 0, badSeconds: 0, alertCount: 0 })
+  }, [])
+
+  const toggleMonitoring = useCallback(() => {
+    const next = !isMonitoringRef.current
+    isMonitoringRef.current = next
+    setIsMonitoring(next)
+
+    if (!next) {
+      // Turn OFF — stop camera, reset UI, notify main process
+      stopCamera()
+      setSlouchPercent(0)
+      setLandmarks(null)
+      setStatus('paused')
+      window.electronAPI?.postureUpdate({ percent: -1, deviationThreshold: 0, slouchSeconds: 0, cooldownSeconds: 0 })
+    } else {
+      // Turn ON — restart camera, reset tick so elapsed doesn't jump
+      lastTickRef.current = Date.now()
+      setStatus(baseline ? 'uncalibrated' : 'uncalibrated')
+      startCamera()
+    }
+  }, [baseline, startCamera, stopCamera])
+
   useEffect(() => {
     const saved = localStorage.getItem('ergovision-baseline')
     if (saved) {
@@ -235,13 +271,8 @@ export function usePostureEngine() {
   // Cleanup: cancel animation frame when component unmounts
   useEffect(() => {
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      cancelAnimationFrame(rafRef.current)
     }
-  }, [])
-
-  const dismissAlert = useCallback(() => {
-    window.electronAPI?.restoreBrightness()
-    isDimmedRef.current = false
   }, [])
 
   return {
@@ -249,8 +280,12 @@ export function usePostureEngine() {
     status,
     baseline,
     slouchPercent,
+    landmarks,
+    stats,
+    isMonitoring,
     startCamera,
     calibrate,
-    dismissAlert,
+    resetStats,
+    toggleMonitoring,
   }
 }

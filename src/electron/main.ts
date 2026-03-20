@@ -128,8 +128,27 @@ function createWindow() {
   win.webContents.on('did-fail-load', (_e, code, desc) => console.error('❌ Window failed to load:', code, desc))
 }
 
-ipcMain.on('dim-screen', () => { dimScreen() })
-ipcMain.on('restore-brightness', () => restoreBrightness())
+// ─── IPC Handlers ─────────────────────────────────────────────────────────────
+
+// React sends posture data every frame — main process uses this for monitoring
+ipcMain.on('posture-update', (_event, data: {
+  percent: number
+  deviationThreshold: number
+  slouchSeconds: number
+  cooldownSeconds: number
+}) => {
+  // percent === -1 means monitoring was turned off by user
+  if (data.percent === -1) {
+    slouchStartTime = null
+    restoreBrightness()
+    lastPosturePercent = 0
+    return
+  }
+  lastPosturePercent = data.percent
+  lastDeviationThreshold = data.deviationThreshold
+  lastSlouchSeconds = data.slouchSeconds
+  lastCooldownSeconds = data.cooldownSeconds
+})
 
 ipcMain.on('show-notification', (_event, { title, body }: { title: string; body: string }) => {
   console.log('📣 Notification requested:', title, body)
