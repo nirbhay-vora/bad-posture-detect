@@ -1,0 +1,89 @@
+{
+  "name": "ergovision",
+  "version": "1.0.0",
+  "description": "Posture monitoring app using AI",
+  "author": "ErgoVision",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "compile-electron": "tsc -p tsconfig.electron.json",
+    "dev": "concurrently -n VITE,ELECTRON -c cyan,yellow \"vite\" \"npm run compile-electron && wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "build": "vite build && tsc -p tsconfig.electron.json",
+    "preview": "vite preview",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.ergovision.app",
+    "productName": "ErgoVision",
+    "directories": {
+      "buildResources": "assets",
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.ico"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "public/icon.ico",
+      "category": "public.app-category.healthcare-fitness"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.ico",
+      "category": "Utility"
+    },
+    "portable": {
+      "artifactName": "ErgoVision-portable.exe"
+    }
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.14",
+    "lucide-react": "^0.446.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^32.1.2",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.4.47",
+    "tailwindcss": "3.4.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.8",
+    "wait-on": "^8.0.1"
+  }
+}
