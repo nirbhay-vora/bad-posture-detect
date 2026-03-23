@@ -4,12 +4,16 @@ export interface Settings {
   deviationThreshold: number  // % deviation to consider bad posture (default 20)
   slouchSeconds: number       // seconds of bad posture before alert (default 10)
   cooldownSeconds: number     // seconds between alerts (default 10)
+  breakReminderEnabled: boolean // whether to show break reminders (default true)
+  breakReminderMinutes: number  // minutes of sitting before break reminder (default 45)
 }
 
 const DEFAULT_SETTINGS: Settings = {
   deviationThreshold: 20,
   slouchSeconds: 10,
   cooldownSeconds: 10,
+  breakReminderEnabled: true,
+  breakReminderMinutes: 45,
 }
 
 export function useSettings() {

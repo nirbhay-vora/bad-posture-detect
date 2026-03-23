@@ -28,8 +28,10 @@ export interface Baseline {
   gap: number        // vertical distance between nose and shoulder
 }
 
-export function usePostureEngine() {
-  // The actual MediaPipe model instance
+export function usePostureEngine(
+  settings: Settings,
+  externalBaseline?: Baseline | null   // Feature 4: injected from active profile
+) {
   const landmarkerRef = useRef<PoseLandmarker | null>(null)
   
   // Reference to the <video> element (set by Dashboard.tsx)
@@ -46,12 +48,22 @@ export function usePostureEngine() {
   const settingsRef = useRef(settings)
   const isMonitoringRef = useRef(true)
 
+  // Break reminder
+  const sittingStartRef = useRef<number>(Date.now())
+  const breakCooldownUntilRef = useRef<number>(0)
+  const [needsBreak, setNeedsBreak] = useState(false)
+
   useEffect(() => { settingsRef.current = settings }, [settings])
 
   const [status, setStatus] = useState<PostureStatus>('loading')
   const [isMonitoring, setIsMonitoring] = useState(true)
-  const [baseline, setBaseline] = useState<Baseline | null>(null)
+  const [baseline, setBaseline] = useState<Baseline | null>(() => {
+    const saved = localStorage.getItem('ergovision-baseline')
+    return saved ? JSON.parse(saved) : null
+  })
   const [slouchPercent, setSlouchPercent] = useState(0)
+  const [landmarks, setLandmarks] = useState<NormalizedLandmark[] | null>(null)
+  const [stats, setStats] = useState<SessionStats>({ goodSeconds: 0, badSeconds: 0, alertCount: 0 })
 
   // ─── Step 1: Load the MediaPipe model ───────────────────────────────────────
   useEffect(() => {
@@ -83,11 +95,10 @@ export function usePostureEngine() {
     }
 
     loadModel()
-  }, []) // Empty array = run once when component mounts
+  }, [])
 
   // ─── Step 2: The main detection loop ────────────────────────────────────────
   const detectPosture = useCallback(() => {
-    // If monitoring turned off, stop the loop
     if (!isMonitoringRef.current) return
 
     const video = videoRef.current
@@ -107,15 +118,11 @@ export function usePostureEngine() {
     }
     lastVideoTimeRef.current = video.currentTime
 
-    // Run detection — MediaPipe gives us 33 landmarks for the body
-    const result: PoseLandmarkerResult = landmarker.detectForVideo(
-      video,
-      performance.now()
-    )
+    const result: PoseLandmarkerResult = landmarker.detectForVideo(video, performance.now())
 
-    // If a person is detected and we have a baseline, analyze posture
     if (result.landmarks.length > 0 && baseline) {
-      const landmarks = result.landmarks[0] // First (only) detected person
+      const lm = result.landmarks[0]
+      setLandmarks(lm)
 
       const noseY = landmarks[NOSE].y
       const shoulderY =
@@ -132,7 +139,7 @@ export function usePostureEngine() {
       //   • Perfect posture = current gap ≈ baseline gap → result ≈ 0% (0 deviation)
       //   • Bad posture     = current gap is smaller      → result > 0% (positive deviation)
       const currentGap = shoulderY - noseY
-      const deviation = 1 - currentGap / baseline.gap
+      const deviation = 1 - currentGap / activeBaseline.gap
       const percentage = Math.round(deviation * 100)
 
       setSlouchPercent(Math.max(0, percentage))
@@ -141,23 +148,15 @@ export function usePostureEngine() {
       const elapsed = (now - lastTickRef.current) / 1000
       lastTickRef.current = now
 
-        if (slouchBufferRef.current >= SLOUCH_THRESHOLD && cooldownRef.current === 0) {
-          console.warn('🚨 BAD POSTURE detected!')
-          window.electronAPI?.dimScreen()
-          window.electronAPI?.notify(
-            '🧍 ErgoVision Alert',
-            'You\'ve been slouching for ~10 seconds. Sit up straight!'
-          )
-          isDimmedRef.current = true
-          cooldownRef.current = NOTIFY_COOLDOWN_FRAMES
-          slouchBufferRef.current = 0
-        }
+      const { deviationThreshold, slouchSeconds, cooldownSeconds } = settingsRef.current
 
       window.electronAPI?.postureUpdate({ percent: percentage, deviationThreshold, slouchSeconds, cooldownSeconds })
 
       if (percentage > deviationThreshold) {
         setStats(s => ({ ...s, badSeconds: s.badSeconds + elapsed }))
         setStatus('bad')
+        // Log bad posture event
+        onBadPostureEventRef.current?.()
       } else {
         slouchBufferRef.current = 0
         // Auto-restore brightness as soon as posture is good again
@@ -167,16 +166,13 @@ export function usePostureEngine() {
         }
         setStatus('good')
       }
-
-      // Tick down the notification cooldown each frame
-      if (cooldownRef.current > 0) {
-        cooldownRef.current -= 1
-      }
+    } else {
+      setLandmarks(null)
     }
 
     // Schedule the next frame (this is what makes it a continuous loop)
     rafRef.current = requestAnimationFrame(detectPosture)
-  }, [baseline])
+  }, [])
 
   const stopCamera = useCallback(() => {
     cancelAnimationFrame(rafRef.current)
@@ -190,7 +186,6 @@ export function usePostureEngine() {
   // ─── Step 3: Start/stop camera and detection loop ───────────────────────────
   const startCamera = useCallback(async () => {
     try {
-      // Request webcam access from the browser
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: 'user' }
       })
@@ -235,10 +230,16 @@ export function usePostureEngine() {
     // Save to localStorage so calibration persists across sessions
     localStorage.setItem('ergovision-baseline', JSON.stringify(newBaseline))
     setStatus('good')
+    return newBaseline
   }, [])
 
   const resetStats = useCallback(() => {
     setStats({ goodSeconds: 0, badSeconds: 0, alertCount: 0 })
+  }, [])
+
+  const dismissBreak = useCallback(() => {
+    setNeedsBreak(false)
+    sittingStartRef.current = Date.now() // reset so next reminder is relative to now
   }, [])
 
   const toggleMonitoring = useCallback(() => {
@@ -247,25 +248,24 @@ export function usePostureEngine() {
     setIsMonitoring(next)
 
     if (!next) {
-      // Turn OFF — stop camera, reset UI, notify main process
       stopCamera()
       setSlouchPercent(0)
       setLandmarks(null)
       setStatus('paused')
+      setNeedsBreak(false)
       window.electronAPI?.postureUpdate({ percent: -1, deviationThreshold: 0, slouchSeconds: 0, cooldownSeconds: 0 })
     } else {
-      // Turn ON — restart camera, reset tick so elapsed doesn't jump
       lastTickRef.current = Date.now()
-      setStatus(baseline ? 'uncalibrated' : 'uncalibrated')
+      sittingStartRef.current = Date.now() // reset sitting timer when monitoring resumes
+      breakCooldownUntilRef.current = 0
+      setStatus('uncalibrated')
       startCamera()
     }
   }, [baseline, startCamera, stopCamera])
 
   useEffect(() => {
     const saved = localStorage.getItem('ergovision-baseline')
-    if (saved) {
-      setBaseline(JSON.parse(saved))
-    }
+    if (saved) setBaseline(JSON.parse(saved))
   }, [])
 
   // Cleanup: cancel animation frame when component unmounts
@@ -283,9 +283,12 @@ export function usePostureEngine() {
     landmarks,
     stats,
     isMonitoring,
+    needsBreak,
     startCamera,
     calibrate,
     resetStats,
     toggleMonitoring,
+    dismissBreak,
+    setOnBadPostureEvent,
   }
 }
