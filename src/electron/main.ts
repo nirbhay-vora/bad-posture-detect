@@ -224,7 +224,10 @@ ipcMain.on('posture-update', (_event, data: {
   if (data.percent === -1) {
     slouchStartTime = null
     isAlertPending = false
-    restoreBrightness()
+    if (isDimmed) {
+      restoreBrightness()
+      isDimmed = false
+    }
     lastPosturePercent = 0
     return
   }

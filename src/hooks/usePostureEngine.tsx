@@ -222,8 +222,8 @@ export function usePostureEngine(
       const { deviationThreshold, slouchSeconds, cooldownSeconds } = settingsRef.current
 
       window.electronAPI?.postureUpdate({ 
-        percent: (isMonitoring && !isFocusMode) ? Math.max(0, percentage) : -1, 
-        deviationThreshold, 
+        percent: Math.max(0, percentage), 
+        deviationThreshold: isFocusMode ? 999 : deviationThreshold,
         slouchSeconds, 
         cooldownSeconds,
         feedback: currentFeedback
