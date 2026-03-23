@@ -65,6 +65,7 @@ export function usePostureEngine(
   const lastTickRef = useRef<number>(Date.now())
   const settingsRef = useRef(settings)
   const isMonitoringRef = useRef(true)
+  const activeBaselineRef = useRef<Baseline | null>(null)
 
   // Break reminder
   const sittingStartRef = useRef<number>(Date.now())
@@ -87,6 +88,10 @@ export function usePostureEngine(
     goodSeconds: 0, badSeconds: 0, alertCount: 0,
     causes: { slouch: 0, leaning: 0, shoulder: 0, close: 0 }
   })
+
+  useEffect(() => {
+    activeBaselineRef.current = externalBaseline || baseline
+  }, [externalBaseline, baseline])
 
   // ─── Step 1: Load the MediaPipe model ───────────────────────────────────────
   useEffect(() => {
@@ -142,9 +147,9 @@ export function usePostureEngine(
     lastVideoTimeRef.current = video.currentTime
 
     const result: PoseLandmarkerResult = landmarker.detectForVideo(video, performance.now())
+    const currentActiveBaseline = activeBaselineRef.current
 
-    if (result.landmarks.length > 0 && (baseline || externalBaseline)) {
-      const activeBaseline = externalBaseline || baseline!
+    if (result.landmarks.length > 0 && currentActiveBaseline) {
       const lm = result.landmarks[0]
       setLandmarks(lm)
 
@@ -152,31 +157,21 @@ export function usePostureEngine(
       const shoulderY =
         (lm[LEFT_SHOULDER].y + lm[RIGHT_SHOULDER].y) / 2
 
-      // ── The Slouch Formula ──────────────────────────────────────────────────
-      // During calibration we stored the "ideal" nose position and shoulder position.
-      // Now we calculate how much the user has deviated from that ideal.
-      //
-      // When you slouch, your nose drops closer to your shoulders.
-      // So (shoulderY - noseY) gets smaller when you slouch.
-      //
-      // Formula: 1 - (current gap / baseline gap)
-      //   • Perfect posture = current gap ≈ baseline gap → result ≈ 0% (0 deviation)
-      //   • Bad posture     = current gap is smaller      → result > 0% (positive deviation)
       const currentGap = shoulderY - noseY
-      const slouchDev = Math.max(0, (1 - currentGap / activeBaseline.gap) * 100)
+      const slouchDev = Math.max(0, (1 - currentGap / currentActiveBaseline.gap) * 100)
 
       let percentage = slouchDev
       let currentFeedback = "Good posture! Keep it up."
       let badType: 'slouch' | 'leaning' | 'shoulder' | 'close' | null = null
 
-      if (activeBaseline.shoulderWidth !== undefined) {
+      if (currentActiveBaseline.shoulderWidth !== undefined) {
          const w = Math.abs(lm[RIGHT_SHOULDER].x - lm[LEFT_SHOULDER].x)
          const nx = lm[NOSE].x - (lm[LEFT_SHOULDER].x + lm[RIGHT_SHOULDER].x) / 2
          const tilt = lm[LEFT_SHOULDER].y - lm[RIGHT_SHOULDER].y
 
-         const closeDev = Math.max(0, ((w / activeBaseline.shoulderWidth) - 1.1) * 800)
-         const tiltDev = Math.max(0, (Math.abs(tilt - activeBaseline.shoulderTilt!) - 0.03) * 1000)
-         const leanDev = Math.max(0, (Math.abs(nx - activeBaseline.noseXDeviation!) - 0.04) * 1000)
+         const closeDev = Math.max(0, ((w / currentActiveBaseline.shoulderWidth) - 1.1) * 800)
+         const tiltDev = Math.max(0, (Math.abs(tilt - currentActiveBaseline.shoulderTilt!) - 0.03) * 1000)
+         const leanDev = Math.max(0, (Math.abs(nx - currentActiveBaseline.noseXDeviation!) - 0.04) * 1000)
 
          // Feature 9: Desk Setup Awareness
          const dxLeft = Math.abs(lm[NOSE].x - lm[LEFT_EAR].x)
