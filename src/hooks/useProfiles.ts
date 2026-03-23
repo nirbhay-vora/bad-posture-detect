@@ -94,6 +94,16 @@ export function useProfiles() {
     })
   }, [])
 
+  const updateProfileBaseline = useCallback((id: string, baseline: Baseline) => {
+    setProfiles(prev => {
+      const next = prev.map(p => p.id === id ? { ...p, baseline } : p)
+      saveProfiles(next)
+      return next
+    })
+    // Also keep ergovision-baseline in sync
+    localStorage.setItem('ergovision-baseline', JSON.stringify(baseline))
+  }, [])
+
   return {
     profiles,
     activeProfile,
@@ -102,5 +112,6 @@ export function useProfiles() {
     switchProfile,
     deleteProfile,
     renameProfile,
+    updateProfileBaseline,
   }
 }

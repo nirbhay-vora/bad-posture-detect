@@ -40,7 +40,7 @@ const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
 export function Dashboard() {
   const { settings, updateSettings } = useSettings()
   const { sessions, badEvents, addSession, logBadPostureEvent, clearHistory, worstHour } = usePostureHistory()
-  const { profiles, activeProfile, activeProfileId, addProfile, switchProfile, deleteProfile } = useProfiles()
+  const { profiles, activeProfile, activeProfileId, addProfile, switchProfile, deleteProfile, updateProfileBaseline } = useProfiles()
   const { exportPdf } = usePdfExport()
 
   const [focusUntil, setFocusUntil] = useState<number | null>(null)
@@ -115,9 +115,18 @@ export function Dashboard() {
   const handleCalibrate = useCallback(() => {
     saveSession()
     resetStats()
-    switchProfile(null) // Clear active profile since we are creating a new manual calibration
-    return calibrate()
-  }, [calibrate, saveSession, resetStats, switchProfile])
+    if (activeProfileId) {
+      // If a profile is active, calibrate and update that profile's stored baseline
+      const newBaseline = calibrate()
+      if (newBaseline && activeProfileId) {
+        updateProfileBaseline(activeProfileId, newBaseline)
+      }
+      return newBaseline
+    } else {
+      // No active profile — just calibrate manually
+      return calibrate()
+    }
+  }, [calibrate, saveSession, resetStats, activeProfileId, updateProfileBaseline])
 
   useEffect(() => {
     startCamera()
