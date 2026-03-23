@@ -67,7 +67,17 @@ function getWindowsBrightness(): Promise<number> {
 
 function sendNotification(title: string, body: string) {
   if (Notification.isSupported()) {
-    new Notification({ title, body }).show()
+    const notifOptions: Electron.NotificationConstructorOptions = { title, body }
+    if (isLinux) (notifOptions as any).urgency = 'normal'
+    const notif = new Notification(notifOptions)
+    notif.show()
+  } else {
+    exec(`notify-send "${title}" "${body}"`, (err) => {
+      if (err) {
+        console.warn('⚠️ notify-send failed, sending in-app fallback')
+        BrowserWindow.getAllWindows()[0]?.webContents.send('fallback-alert', { title, body })
+      }
+    })
   }
 }
 
@@ -246,6 +256,7 @@ app.whenReady().then(() => {
   app.setName('ErgoVision')
   console.log('🚀 Electron app ready')
   createWindow()
+  startPostureMonitor()
 })
 
 app.on('window-all-closed', () => {
