@@ -79,7 +79,31 @@ export function SettingsPanel({ settings, onChange }: Props) {
             className="w-full accent-amber-500"
             disabled={!settings.breakReminderEnabled}
           />
-          <p className="text-slate-500 text-xs">Minutes of continuous sitting before break reminder fires</p>
+          <p className="text-slate-500 text-xs">Minutes of continuous sitting before break reminder</p>
+        </div>
+      </div>
+
+      {/* ─── Privacy & Display ────────────────────────────────────────────── */}
+      <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 space-y-6">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          Privacy & Display
+        </h2>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-white font-medium">Ghost Mode (Hide Video)</p>
+            <p className="text-slate-400 text-sm">Run AI locally but hide your camera feed from the screen.</p>
+          </div>
+          <button
+            onClick={() => onChange({ privacyMode: !settings.privacyMode })}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${
+              settings.privacyMode ? 'bg-blue-600' : 'bg-slate-600'
+            }`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              settings.privacyMode ? 'translate-x-6' : 'translate-x-1'
+            }`} />
+          </button>
         </div>
       </div>
     </div>

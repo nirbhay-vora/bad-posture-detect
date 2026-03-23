@@ -11,12 +11,16 @@ import { useRef, useState, useCallback, useEffect } from 'react'
 import {
   PoseLandmarker,
   FilesetResolver,
-  type PoseLandmarkerResult
+  type PoseLandmarkerResult,
+  type NormalizedLandmark
 } from '@mediapipe/tasks-vision'
+import type { Settings } from './useSettings'
 
 // Pose landmark indices from MediaPipe's 33-point body model
 // Full list: https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
 const NOSE = 0
+const LEFT_EAR = 7
+const RIGHT_EAR = 8
 const LEFT_SHOULDER = 11
 const RIGHT_SHOULDER = 12
 
@@ -26,11 +30,22 @@ export interface Baseline {
   noseY: number
   shoulderY: number
   gap: number        // vertical distance between nose and shoulder
+  shoulderWidth?: number
+  noseXDeviation?: number
+  shoulderTilt?: number
+}
+
+export interface SessionStats {
+  goodSeconds: number
+  badSeconds: number
+  alertCount: number
+  causes: { slouch: number; leaning: number; shoulder: number; close: number }
 }
 
 export function usePostureEngine(
   settings: Settings,
-  externalBaseline?: Baseline | null   // Feature 4: injected from active profile
+  externalBaseline?: Baseline | null,   // Feature 4: injected from active profile
+  isFocusMode: boolean = false
 ) {
   const landmarkerRef = useRef<PoseLandmarker | null>(null)
   
@@ -43,6 +58,9 @@ export function usePostureEngine(
   // Counts consecutive bad-posture frames
   const slouchBufferRef = useRef(0)
   const cooldownRef = useRef(0)
+  const isDimmedRef = useRef(false)
+  const onBadPostureEventRef = useRef<(() => void) | null>(null)
+  const setOnBadPostureEvent = useCallback((cb: () => void) => { onBadPostureEventRef.current = cb }, [])
   const lastVideoTimeRef = useRef(-1)
   const lastTickRef = useRef<number>(Date.now())
   const settingsRef = useRef(settings)
@@ -62,8 +80,13 @@ export function usePostureEngine(
     return saved ? JSON.parse(saved) : null
   })
   const [slouchPercent, setSlouchPercent] = useState(0)
+  const [feedback, setFeedback] = useState("Calibrate to begin monitoring")
+  const lastFeedbackRef = useRef("Calibrate to begin monitoring")
   const [landmarks, setLandmarks] = useState<NormalizedLandmark[] | null>(null)
-  const [stats, setStats] = useState<SessionStats>({ goodSeconds: 0, badSeconds: 0, alertCount: 0 })
+  const [stats, setStats] = useState<SessionStats>({
+    goodSeconds: 0, badSeconds: 0, alertCount: 0,
+    causes: { slouch: 0, leaning: 0, shoulder: 0, close: 0 }
+  })
 
   // ─── Step 1: Load the MediaPipe model ───────────────────────────────────────
   useEffect(() => {
@@ -120,13 +143,14 @@ export function usePostureEngine(
 
     const result: PoseLandmarkerResult = landmarker.detectForVideo(video, performance.now())
 
-    if (result.landmarks.length > 0 && baseline) {
+    if (result.landmarks.length > 0 && (baseline || externalBaseline)) {
+      const activeBaseline = externalBaseline || baseline!
       const lm = result.landmarks[0]
       setLandmarks(lm)
 
-      const noseY = landmarks[NOSE].y
+      const noseY = lm[NOSE].y
       const shoulderY =
-        (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
+        (lm[LEFT_SHOULDER].y + lm[RIGHT_SHOULDER].y) / 2
 
       // ── The Slouch Formula ──────────────────────────────────────────────────
       // During calibration we stored the "ideal" nose position and shoulder position.
@@ -139,10 +163,62 @@ export function usePostureEngine(
       //   • Perfect posture = current gap ≈ baseline gap → result ≈ 0% (0 deviation)
       //   • Bad posture     = current gap is smaller      → result > 0% (positive deviation)
       const currentGap = shoulderY - noseY
-      const deviation = 1 - currentGap / activeBaseline.gap
-      const percentage = Math.round(deviation * 100)
+      const slouchDev = Math.max(0, (1 - currentGap / activeBaseline.gap) * 100)
+
+      let percentage = slouchDev
+      let currentFeedback = "Good posture! Keep it up."
+      let badType: 'slouch' | 'leaning' | 'shoulder' | 'close' | null = null
+
+      if (activeBaseline.shoulderWidth !== undefined) {
+         const w = Math.abs(lm[RIGHT_SHOULDER].x - lm[LEFT_SHOULDER].x)
+         const nx = lm[NOSE].x - (lm[LEFT_SHOULDER].x + lm[RIGHT_SHOULDER].x) / 2
+         const tilt = lm[LEFT_SHOULDER].y - lm[RIGHT_SHOULDER].y
+
+         const closeDev = Math.max(0, ((w / activeBaseline.shoulderWidth) - 1.1) * 800)
+         const tiltDev = Math.max(0, (Math.abs(tilt - activeBaseline.shoulderTilt!) - 0.03) * 1000)
+         const leanDev = Math.max(0, (Math.abs(nx - activeBaseline.noseXDeviation!) - 0.04) * 1000)
+
+         // Feature 9: Desk Setup Awareness
+         const dxLeft = Math.abs(lm[NOSE].x - lm[LEFT_EAR].x)
+         const dxRight = Math.abs(lm[NOSE].x - lm[RIGHT_EAR].x)
+         const deskDevLeft = dxLeft > dxRight * 2.5 ? 35 : 0
+         const deskDevRight = dxRight > dxLeft * 2.5 ? 35 : 0
+
+         const deviations = [
+           { type: 'slouch', val: slouchDev, msg: "Your neck is straining forward. Pull your chin back." },
+           { type: 'close', val: closeDev, msg: "You're too close to the screen. Move back." },
+           { type: 'shoulder', val: tiltDev, msg: "One shoulder is raised. Relax your shoulders." },
+           { type: 'leaning', val: leanDev, msg: "You're leaning to the side. Center your weight." },
+           { type: 'desk', val: deskDevLeft, msg: "You're consistently looking right. Center your primary monitor." },
+           { type: 'desk', val: deskDevRight, msg: "You're consistently looking left. Center your primary monitor." }
+         ]
+
+         let maxDev = deviations[0]
+         for (const dev of deviations) {
+           if (dev.val > maxDev.val) maxDev = dev
+         }
+
+         percentage = Math.round(maxDev.val)
+
+         if (percentage > settingsRef.current.deviationThreshold) {
+           currentFeedback = maxDev.msg
+           badType = maxDev.type === 'desk' ? 'leaning' : maxDev.type as any
+         }
+      } else {
+         // Fallback for old baselines without extended data
+         percentage = Math.round(slouchDev)
+         if (percentage > settingsRef.current.deviationThreshold) {
+            currentFeedback = "Your neck is straining forward. Pull your chin back."
+            badType = 'slouch'
+         }
+      }
 
       setSlouchPercent(Math.max(0, percentage))
+      
+      if (currentFeedback !== lastFeedbackRef.current) {
+        lastFeedbackRef.current = currentFeedback
+        setFeedback(currentFeedback)
+      }
 
       const now = Date.now()
       const elapsed = (now - lastTickRef.current) / 1000
@@ -150,10 +226,20 @@ export function usePostureEngine(
 
       const { deviationThreshold, slouchSeconds, cooldownSeconds } = settingsRef.current
 
-      window.electronAPI?.postureUpdate({ percent: percentage, deviationThreshold, slouchSeconds, cooldownSeconds })
+      window.electronAPI?.postureUpdate({ 
+        percent: (isMonitoring && !isFocusMode) ? Math.max(0, percentage) : -1, 
+        deviationThreshold, 
+        slouchSeconds, 
+        cooldownSeconds,
+        feedback: currentFeedback
+      })
 
       if (percentage > deviationThreshold) {
-        setStats(s => ({ ...s, badSeconds: s.badSeconds + elapsed }))
+        setStats(s => {
+          const newCauses = { ...s.causes }
+          if (badType) newCauses[badType] += elapsed
+          return { ...s, badSeconds: s.badSeconds + elapsed, causes: newCauses }
+        })
         setStatus('bad')
         // Log bad posture event
         onBadPostureEventRef.current?.()
@@ -218,13 +304,16 @@ export function usePostureEngine(
       return
     }
 
-    const landmarks = result.landmarks[0]
-    const noseY = landmarks[NOSE].y
+    const lm = result.landmarks[0]
+    const noseY = lm[NOSE].y
     const shoulderY =
-      (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
+      (lm[LEFT_SHOULDER].y + lm[RIGHT_SHOULDER].y) / 2
     const gap = shoulderY - noseY
+    const shoulderWidth = Math.abs(lm[RIGHT_SHOULDER].x - lm[LEFT_SHOULDER].x)
+    const noseXDeviation = lm[NOSE].x - (lm[LEFT_SHOULDER].x + lm[RIGHT_SHOULDER].x) / 2
+    const shoulderTilt = lm[LEFT_SHOULDER].y - lm[RIGHT_SHOULDER].y
 
-    const newBaseline: Baseline = { noseY, shoulderY, gap }
+    const newBaseline: Baseline = { noseY, shoulderY, gap, shoulderWidth, noseXDeviation, shoulderTilt }
     setBaseline(newBaseline)
 
     // Save to localStorage so calibration persists across sessions
@@ -234,7 +323,10 @@ export function usePostureEngine(
   }, [])
 
   const resetStats = useCallback(() => {
-    setStats({ goodSeconds: 0, badSeconds: 0, alertCount: 0 })
+    setStats({ 
+      goodSeconds: 0, badSeconds: 0, alertCount: 0,
+      causes: { slouch: 0, leaning: 0, shoulder: 0, close: 0 }
+    })
   }, [])
 
   const dismissBreak = useCallback(() => {
@@ -280,6 +372,7 @@ export function usePostureEngine(
     status,
     baseline,
     slouchPercent,
+    feedback,
     landmarks,
     stats,
     isMonitoring,

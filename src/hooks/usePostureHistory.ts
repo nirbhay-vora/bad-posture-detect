@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 
 export interface PostureSession {
   id: string
@@ -137,6 +137,47 @@ export function usePostureHistory() {
     return { hour: worst, label: `${fmt(worst)}–${fmt(endH)}`, ratio: worstRatio }
   })()
 
+  // Gamification: Streak Calculation (Consecutive days > 80% score)
+  const currentStreak = useMemo(() => {
+    if (sessions.length === 0) return 0
+    
+    // Group by YYYY-MM-DD
+    const grouped = sessions.reduce((acc, s) => {
+      acc[s.date] = acc[s.date] || { good: 0, bad: 0 }
+      acc[s.date].good += s.goodSeconds
+      acc[s.date].bad += s.badSeconds
+      return acc
+    }, {} as Record<string, { good: number, bad: number }>)
+
+    // Daily scores array
+    const dailyScores = Object.entries(grouped).map(([date, data]) => ({
+      date, score: data.good / (data.good + data.bad) * 100
+    }))
+
+    let streak = 0
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    let checkDate = new Date(today)
+    
+    // Check if today exists and is >= 80
+    let dayData = dailyScores.find(d => d.date === checkDate.toLocaleDateString('en-CA'))
+    if (!dayData || dayData.score < 80) {
+      // Try yesterday
+      checkDate.setDate(checkDate.getDate() - 1)
+      dayData = dailyScores.find(d => d.date === checkDate.toLocaleDateString('en-CA'))
+      if (!dayData || dayData.score < 80) return 0
+    }
+
+    while (dayData && dayData.score >= 80) {
+      streak++
+      checkDate.setDate(checkDate.getDate() - 1)
+      dayData = dailyScores.find(d => d.date === checkDate.toLocaleDateString('en-CA'))
+    }
+
+    return streak
+  }, [sessions])
+
   return {
     sessions,
     badEvents,
@@ -144,5 +185,6 @@ export function usePostureHistory() {
     logBadPostureEvent,
     clearHistory,
     worstHour,
+    currentStreak
   }
 }

@@ -6,12 +6,23 @@ function fmt(seconds: number) {
   return `${m}:${s}`
 }
 
-interface Props {
+interface SessionStatsPanelProps {
   stats: SessionStats
+  currentStreak?: number
   onReset: () => void
 }
 
-export function SessionStatsPanel({ stats, onReset }: Props) {
+// Helper component for displaying individual metrics
+function MetricCard({ label, value, color }: { label: string; value: string | number; color: string }) {
+  return (
+    <div className="bg-slate-700/50 rounded-lg p-3">
+      <p className={`${color} font-bold text-lg`}>{value}</p>
+      <p className="text-slate-400 text-xs mt-1">{label}</p>
+    </div>
+  )
+}
+
+export function SessionStatsPanel({ stats, currentStreak = 0, onReset }: SessionStatsPanelProps) {
   const total = stats.goodSeconds + stats.badSeconds
   const goodPct = total > 0 ? Math.round((stats.goodSeconds / total) * 100) : 0
 
@@ -23,6 +34,12 @@ export function SessionStatsPanel({ stats, onReset }: Props) {
           Reset
         </button>
       </div>
+
+      {currentStreak > 2 && (
+        <div className="mb-2 bg-indigo-500/20 text-indigo-300 px-4 py-2 rounded-full text-sm font-bold flex items-center justify-center gap-2">
+          🔥 {currentStreak} Day Posture Streak! Keep it up!
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-3 text-center">
         <div className="bg-slate-700/50 rounded-lg p-3">

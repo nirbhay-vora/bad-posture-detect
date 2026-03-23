@@ -6,6 +6,7 @@ export interface Settings {
   cooldownSeconds: number     // seconds between alerts (default 10)
   breakReminderEnabled: boolean // whether to show break reminders (default true)
   breakReminderMinutes: number  // minutes of sitting before break reminder (default 45)
+  privacyMode: boolean
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -14,6 +15,7 @@ const DEFAULT_SETTINGS: Settings = {
   cooldownSeconds: 10,
   breakReminderEnabled: true,
   breakReminderMinutes: 45,
+  privacyMode: false,
 }
 
 export function useSettings() {

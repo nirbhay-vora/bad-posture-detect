@@ -21,30 +21,36 @@ export function HistoryChart({ sessions, worstHour, onExportPdf, onClearHistory 
 
   // ─── Daily chart (last 14 days) ───────────────────────────────────────────
   const dailyData = useMemo(() => {
+    // Generate the last 14 days' date strings (YYYY-MM-DD)
+    const dates: string[] = []
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      dates.push(d.toISOString().split('T')[0])
+    }
+
+    // Aggregate sessions by date
     const byDate: Record<string, { good: number; bad: number }> = {}
     for (const s of sessions) {
       if (!byDate[s.date]) byDate[s.date] = { good: 0, bad: 0 }
       byDate[s.date].good += s.goodSeconds
       byDate[s.date].bad += s.badSeconds
     }
-    // Build the last 14 days grid
-    const result = []
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date()
-      d.setDate(d.getDate() - i)
-      const key = d.toISOString().split('T')[0]
-      const entry = byDate[key]
+
+    // Map to chart data format
+    return dates.map(dateKey => {
+      const entry = byDate[dateKey]
       const total = entry ? entry.good + entry.bad : 0
-      result.push({
-        date: shortDate(key),
+      return {
+        label: shortDate(dateKey),
         score: total > 0 ? Math.round((entry!.good / total) * 100) : null as number | null,
-      })
-    }
-    return result
+      }
+    })
   }, [sessions])
 
   // ─── Hourly chart (average % good per hour across all days) ──────────────
   const hourlyData = useMemo(() => {
+    // Aggregate sessions by hour
     const byHour: Record<number, { good: number; bad: number }> = {}
     for (const s of sessions) {
       const h = s.hour
@@ -52,15 +58,17 @@ export function HistoryChart({ sessions, worstHour, onExportPdf, onClearHistory 
       byHour[h].good += s.goodSeconds
       byHour[h].bad += s.badSeconds
     }
+
+    // Map to chart data format
     return Array.from({ length: 24 }, (_, h) => {
       const entry = byHour[h]
       const total = entry ? entry.good + entry.bad : 0
-      const fmt = (h: number) => {
-        const ampm = h < 12 ? 'AM' : 'PM'
-        return `${h % 12 === 0 ? 12 : h % 12}${ampm}`
+      const fmt = (hour: number) => {
+        const ampm = hour < 12 ? 'AM' : 'PM'
+        return `${hour % 12 === 0 ? 12 : hour % 12}${ampm}`
       }
       return {
-        hour: fmt(h),
+        label: fmt(h),
         score: total > 0 ? Math.round((entry!.good / total) * 100) : null as number | null,
       }
     })
@@ -129,7 +137,7 @@ export function HistoryChart({ sessions, worstHour, onExportPdf, onClearHistory 
             <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
               <XAxis
-                dataKey={view === 'daily' ? 'date' : 'hour'}
+                dataKey="label"
                 tick={{ fontSize: 10, fill: '#64748b' }}
                 interval={view === 'daily' ? 1 : 2}
               />

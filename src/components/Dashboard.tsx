@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Camera, CheckCircle, AlertTriangle, Loader, Target, Settings as SettingsIcon, BarChart2, Activity } from 'lucide-react'
+import { Camera, CheckCircle, AlertTriangle, Loader, Target, Settings as SettingsIcon, BarChart2, Activity, X, Shield } from 'lucide-react'
 import { usePostureEngine, type PostureStatus } from '../hooks/usePostureEngine'
 import { useSettings } from '../hooks/useSettings'
 import { usePostureHistory } from '../hooks/usePostureHistory'
@@ -11,6 +11,7 @@ import { SessionStatsPanel } from './SessionStatsPanel'
 import { HistoryChart } from './HistoryChart'
 import { PostureHeatmap } from './PostureHeatmap'
 import { ProfileManager } from './ProfileManager'
+import { StretchGuide } from './StretchGuide'
 
 // ── Helper: status-based config ──────────────────────────────────────────────
 // Instead of if/else chains in JSX, we map status → display properties here.
@@ -25,9 +26,11 @@ function getStatusConfig(status: PostureStatus) {
   }
 }
 
+import type { LucideIcon } from 'lucide-react'
+
 type Tab = 'monitor' | 'stats' | 'analytics' | 'settings'
 
-const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
   { id: 'monitor', label: 'Monitor', icon: Activity },
   { id: 'stats', label: 'Stats', icon: BarChart2 },
   { id: 'analytics', label: 'Analytics', icon: Camera },
@@ -40,12 +43,44 @@ export function Dashboard() {
   const { profiles, activeProfile, activeProfileId, addProfile, switchProfile, deleteProfile } = useProfiles()
   const { exportPdf } = usePdfExport()
 
-  const {
-    videoRef, status, baseline, slouchPercent, landmarks, stats, isMonitoring,
-    needsBreak, startCamera, calibrate, resetStats, toggleMonitoring, dismissBreak, setOnBadPostureEvent
-  } = usePostureEngine(settings, activeProfile?.baseline)
+  const [focusUntil, setFocusUntil] = useState<number | null>(null)
 
-  const [tab, setTab] = useState<Tab>('monitor')
+  useEffect(() => {
+    if (!focusUntil) return
+    const interval = setInterval(() => {
+      // Force re-render to update the countdown
+      setFocusUntil(prev => {
+        if (!prev || Date.now() > prev) return null
+        return prev
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [focusUntil])
+
+  const formatTimeLeft = (targetTime: number) => {
+    const s = Math.ceil(Math.max(0, targetTime - Date.now()) / 1000)
+    return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
+  }
+
+  const {
+    videoRef, 
+    status, 
+    baseline, 
+    slouchPercent, 
+    feedback,
+    landmarks, 
+    stats, 
+    isMonitoring, 
+    needsBreak,
+    startCamera, 
+    calibrate, 
+    resetStats, 
+    toggleMonitoring, 
+    dismissBreak, setOnBadPostureEvent
+  } = usePostureEngine(settings, activeProfile?.baseline, focusUntil !== null)
+
+  const [activeTab, setActiveTab] = useState<Tab>('monitor')
+  const [showStretchModal, setShowStretchModal] = useState(false)
   const [showTuning, setShowTuning] = useState(false)
   const prevStatsRef = useRef(stats)
 
@@ -103,22 +138,36 @@ export function Dashboard() {
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6">
 
-        {/* Break Reminder Banner */}
-        {needsBreak && (
-          <div className="mb-4 flex items-center gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 animate-pulse-once">
-            <span className="text-2xl">🚶</span>
-            <div className="flex-1">
-              <p className="text-amber-300 font-semibold text-sm">Time for a 5-Minute Walk!</p>
-              <p className="text-amber-200/70 text-xs">You've been sitting for {settings.breakReminderMinutes} minutes. Movement helps your focus and health.</p>
-            </div>
-            <button
-              onClick={dismissBreak}
-              className="text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold transition-colors"
-            >
-              Got it!
-            </button>
-          </div>
-        )}
+        {/* Feature 2 & 3: Break Reminder Banner */}
+      {needsBreak && !showStretchModal && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-yellow-500 text-slate-900 px-6 py-3 rounded-full font-bold shadow-xl flex items-center gap-3 animate-bounce z-50">
+          <Activity size={20} />
+          Your body needs to stretch!
+          <button 
+            onClick={() => setShowStretchModal(true)} 
+            className="ml-2 bg-slate-900 text-yellow-500 px-3 py-1 rounded-full text-sm hover:bg-slate-800 transition-colors"
+          >
+            Start Stretches
+          </button>
+          <button onClick={dismissBreak} className="ml-2 text-slate-800 hover:text-slate-900">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {showStretchModal && (
+        <StretchGuide 
+          primaryCause={
+            ['shoulder', 'leaning', 'close', 'slouch'].reduce((a, b) => 
+              stats.causes[a as keyof typeof stats.causes] > stats.causes[b as keyof typeof stats.causes] ? a : b
+            ) as any
+          }
+          onClose={() => {
+            setShowStretchModal(false)
+            dismissBreak()
+          }}
+        />
+      )}
 
         {/* Header */}
         <div className="mb-5 flex items-center justify-between">
@@ -137,10 +186,23 @@ export function Dashboard() {
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Focus Mode Toggle */}
+            <button
+              onClick={() => {
+                if (focusUntil) setFocusUntil(null)
+                else setFocusUntil(Date.now() + 25 * 60 * 1000)
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all shadow-md ${
+                focusUntil ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300'
+              }`}
+            >
+              🍅 {focusUntil ? formatTimeLeft(focusUntil) : 'Focus Mode'}
+            </button>
+
             {/* On/Off Toggle */}
             <button
               onClick={toggleMonitoring}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all shadow-md ${
                 isMonitoring
                   ? 'bg-green-600 hover:bg-green-500 text-white'
                   : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
@@ -155,8 +217,8 @@ export function Dashboard() {
               {TABS.map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
-                  onClick={() => setTab(id)}
-                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${tab === id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                  onClick={() => setActiveTab(id)}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${activeTab === id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                   <Icon size={13} />
                   {label}
@@ -167,24 +229,48 @@ export function Dashboard() {
         </div>
 
         {/* ─── Monitor Tab ────────────────────────────────────────────────────── */}
-        <div className={tab === 'monitor' ? '' : 'hidden'}>
+        <div className={activeTab === 'monitor' ? '' : 'hidden'}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
             {/* Left: Webcam + Skeleton */}
             <div className="space-y-4">
               <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700 aspect-video relative">
-                <video ref={videoRef} className={`w-full h-full object-cover mirror ${!isMonitoring ? 'invisible' : ''}`} muted playsInline />
+                {settings.privacyMode && isMonitoring && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 z-0 border-b border-slate-800">
+                    <Shield size={48} className="text-emerald-500/50 mb-3" />
+                    <p className="text-emerald-400 font-medium text-sm">Ghost Mode Active</p>
+                    <p className="text-slate-500 text-xs">AI running locally without video preview</p>
+                  </div>
+                )}
+                <video ref={videoRef} className={`w-full h-full object-cover mirror ${(!isMonitoring || settings.privacyMode) ? 'opacity-0' : ''}`} muted playsInline />
                 {isMonitoring
                   ? <SkeletonOverlay landmarks={landmarks} status={status} />
-                  : <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 gap-3">
+                  : <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 gap-3 z-10">
                       <span className="text-5xl">⏸</span>
                       <p className="text-slate-400 text-sm">Monitoring is paused</p>
                       <p className="text-slate-500 text-xs">Toggle ON to resume</p>
                     </div>
                 }
-                <div className={`absolute bottom-3 left-3 px-3 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.color} flex items-center gap-1`}>
-                  <StatusIcon size={12} />
-                  {config.label}
+                <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-slate-900/90 via-slate-900/60 to-transparent flex items-end justify-between">
+                  <div>
+                    <h3 className="font-semibold text-lg drop-shadow-md">Live Feed</h3>
+                    <div className="flex flex-col gap-1 mt-1">
+                      <p className="text-slate-200 font-medium">
+                        {Math.round(slouchPercent)}% Deviation
+                      </p>
+                      {isMonitoring && baseline && (
+                        <p className={`text-sm font-semibold max-w-sm leading-tight transition-colors duration-300 ${status === 'bad' ? 'text-red-400 animate-pulse' : 'text-emerald-400'}`}>
+                          {feedback}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {isMonitoring && baseline && landmarks && (
+                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.color} flex items-center gap-1`}>
+                      <StatusIcon size={12} />
+                      {config.label}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -301,12 +387,12 @@ export function Dashboard() {
         </div>
 
         {/* ─── Stats Tab ──────────────────────────────────────────────────────── */}
-        {tab === 'stats' && (
+        {activeTab === 'stats' && (
           <SessionStatsPanel stats={stats} onReset={handleResetStats} />
         )}
 
         {/* ─── Analytics Tab ──────────────────────────────────────────────────── */}
-        {tab === 'analytics' && (
+        {activeTab === 'analytics' && (
           <div className="space-y-8">
             <HistoryChart
               sessions={sessions}
@@ -327,112 +413,9 @@ export function Dashboard() {
         )}
 
         {/* ─── Settings Tab ───────────────────────────────────────────────────── */}
-        {tab === 'settings' && (
+        {activeTab === 'settings' && (
           <SettingsPanel settings={settings} onChange={updateSettings} />
         )}
       </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-        {/* ── Left: Webcam Feed ── */}
-        <div className="space-y-4">
-          <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700 aspect-video relative">
-            {/* The actual video element — videoRef is set here */}
-            <video
-              ref={videoRef}
-              className="w-full h-full object-cover mirror"
-              muted
-              playsInline
-            />
-            {/* Overlay badge */}
-            <div className={`absolute bottom-3 left-3 px-3 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.color} flex items-center gap-1`}>
-              <StatusIcon size={12} />
-              {config.label}
-            </div>
-          </div>
-
-          {/* Calibrate Button */}
-          <button
-            onClick={calibrate}
-            disabled={status === 'loading' || status === 'error'}
-            className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 font-semibold transition-colors flex items-center justify-center gap-2"
-          >
-            <Target size={18} />
-            {baseline ? 'Re-Calibrate Posture' : 'Calibrate (Sit Up Straight First!)'}
-          </button>
-        </div>
-
-        {/* ── Right: Stats ── */}
-        <div className="space-y-4">
-
-          {/* Circular Health Meter */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 flex flex-col items-center">
-            <p className="text-slate-400 text-sm mb-4 font-medium">Posture Health</p>
-
-            {/* SVG Radial Progress Bar */}
-            <svg width="140" height="140" viewBox="0 0 140 140">
-              {/* Background ring */}
-              <circle
-                cx="70" cy="70" r={radius}
-                fill="none"
-                stroke="#1e293b"
-                strokeWidth="12"
-              />
-              {/* Foreground ring — color changes based on health */}
-              <circle
-                cx="70" cy="70" r={radius}
-                fill="none"
-                stroke={healthPercent > 60 ? '#22c55e' : healthPercent > 30 ? '#f59e0b' : '#ef4444'}
-                strokeWidth="12"
-                strokeLinecap="round"
-                strokeDasharray={circumference}
-                strokeDashoffset={strokeDashoffset}
-                // Start from the top of the circle (default starts at right)
-                transform="rotate(-90 70 70)"
-                className="transition-all duration-500"
-              />
-              {/* Center text */}
-              <text x="70" y="70" textAnchor="middle" dominantBaseline="middle" fill="white" fontSize="22" fontWeight="bold">
-                {healthPercent}%
-              </text>
-            </svg>
-          </div>
-
-          {/* Slouch Details */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 space-y-3">
-            <p className="text-slate-400 text-sm font-medium">Detection Details</p>
-
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-400">Slouch Deviation</span>
-              <span className={slouchPercent > 20 ? 'text-red-400 font-bold' : 'text-green-400'}>
-                {slouchPercent}%
-              </span>
-            </div>
-
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-400">Baseline Set</span>
-              <span className={baseline ? 'text-green-400' : 'text-yellow-400'}>
-                {baseline ? 'Yes ✓' : 'No — Please Calibrate'}
-              </span>
-            </div>
-
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-400">Alert Threshold</span>
-              <span className="text-slate-300">20% deviation × 150 frames</span>
-            </div>
-          </div>
-
-          {/* Instructions */}
-          <div className="bg-slate-800/50 rounded-xl border border-slate-600 p-4">
-            <p className="text-slate-300 text-xs leading-relaxed">
-              <strong className="text-white">How to use:</strong><br />
-              1. Sit in your ideal posture<br />
-              2. Click <strong>"Calibrate"</strong> to set your baseline<br />
-              3. ErgoVision will now monitor you and send an OS notification if you slouch for ~5 seconds
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
   )
 }

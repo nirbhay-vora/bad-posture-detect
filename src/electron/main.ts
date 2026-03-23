@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, powerMonitor } from 'electron'
 import { exec } from 'child_process'
 import * as fs from 'fs'
 import path from 'path'
@@ -13,6 +13,23 @@ const BACKLIGHT_PATH = '/sys/class/backlight/intel_backlight/brightness'
 const MAX_BRIGHTNESS = 24242
 let originalBrightness = 12242
 let originalWindowsBrightness = 100
+
+// ─── Posture State (updated by renderer via IPC) ──────────────────────────────
+let lastPosturePercent = 0
+let lastDeviationThreshold = 20
+let lastSlouchSeconds = 10
+let lastCooldownSeconds = 10
+
+let slouchStartTime: number | null = null   // when continuous bad posture started
+let cooldownUntil = 0                        // timestamp when cooldown expires
+let isDimmed = false
+
+// Feature 6: Smart Notification State
+let lastSpecificFeedback = "You've been slouching! Sit up straight!"
+let isAlertPending = false
+let alertPendingSince = 0
+
+// ─── Brightness ───────────────────────────────────────────────────────────────
 
 function getCurrentBrightness(): number {
   try {
@@ -43,6 +60,55 @@ function getWindowsBrightness(): Promise<number> {
       }
     )
   })
+}
+
+// ─── Main Process Posture Monitor Loop ───────────────────────────────────────
+// Runs every 100ms regardless of window visibility
+
+function sendNotification(title: string, body: string) {
+  if (Notification.isSupported()) {
+    new Notification({ title, body }).show()
+  }
+}
+
+function startPostureMonitor() {
+  setInterval(() => {
+    const now = Date.now()
+    const isBad = lastPosturePercent > lastDeviationThreshold
+
+    if (isBad) {
+      if (slouchStartTime === null) slouchStartTime = now
+      const slouchDuration = now - slouchStartTime
+
+      if (slouchDuration >= lastSlouchSeconds * 1000 && cooldownUntil < now) {
+        if (!isAlertPending) {
+          isAlertPending = true
+          alertPendingSince = now
+          console.log('⏳ Bad posture detected! Queueing smart notification...')
+        }
+      }
+    } else {
+      slouchStartTime = null
+      isAlertPending = false
+      restoreBrightness()
+    }
+
+    // Feature 6: Smart Notification Timing (Wait for a natural pause)
+    if (isAlertPending) {
+      const idleTime = powerMonitor.getSystemIdleTime()
+      const waitTime = now - alertPendingSince
+
+      // Fire if user stops typing/moving mouse for 3 seconds OR if we've waited 15 seconds max
+      if (idleTime >= 3 || waitTime >= 15000) {
+        console.warn(`🚨 Main process: sending queued bad posture alert! (Idle: ${idleTime}s)`)
+        dimScreen()
+        sendNotification('🧍 ErgoVision Alert', lastSpecificFeedback)
+        cooldownUntil = now + lastCooldownSeconds * 1000
+        slouchStartTime = now // reset so it can fire again after cooldown
+        isAlertPending = false
+      }
+    }
+  }, 100)
 }
 
 function setWindowsBrightness(value: number) {
@@ -136,10 +202,12 @@ ipcMain.on('posture-update', (_event, data: {
   deviationThreshold: number
   slouchSeconds: number
   cooldownSeconds: number
+  feedback?: string
 }) => {
   // percent === -1 means monitoring was turned off by user
   if (data.percent === -1) {
     slouchStartTime = null
+    isAlertPending = false
     restoreBrightness()
     lastPosturePercent = 0
     return
@@ -148,6 +216,7 @@ ipcMain.on('posture-update', (_event, data: {
   lastDeviationThreshold = data.deviationThreshold
   lastSlouchSeconds = data.slouchSeconds
   lastCooldownSeconds = data.cooldownSeconds
+  if (data.feedback) lastSpecificFeedback = data.feedback
 })
 
 ipcMain.on('show-notification', (_event, { title, body }: { title: string; body: string }) => {
