@@ -54,6 +54,15 @@ export function useProfiles() {
     setActiveProfileId(id)
     if (id) {
       localStorage.setItem(ACTIVE_KEY, id)
+      // Also sync this profile's baseline immediately so ergovision-baseline
+      // is always in lockstep with the active profile
+      const allProfiles: PostureProfile[] = JSON.parse(
+        localStorage.getItem(PROFILES_KEY) ?? '[]'
+      )
+      const profile = allProfiles.find(p => p.id === id)
+      if (profile) {
+        localStorage.setItem('ergovision-baseline', JSON.stringify(profile.baseline))
+      }
     } else {
       localStorage.removeItem(ACTIVE_KEY)
     }

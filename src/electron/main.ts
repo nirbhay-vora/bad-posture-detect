@@ -100,7 +100,10 @@ function startPostureMonitor() {
     } else {
       slouchStartTime = null
       isAlertPending = false
-      restoreBrightness()
+      if (isDimmed) {
+        restoreBrightness()
+        isDimmed = false
+      }
     }
 
     // Feature 6: Smart Notification Timing (Wait for a natural pause)
@@ -111,7 +114,10 @@ function startPostureMonitor() {
       // Fire if user stops typing/moving mouse for 3 seconds OR if we've waited 15 seconds max
       if (idleTime >= 3 || waitTime >= 15000) {
         console.warn(`🚨 Main process: sending queued bad posture alert! (Idle: ${idleTime}s)`)
-        dimScreen()
+        if (!isDimmed) {
+          dimScreen()
+          isDimmed = true
+        }
         sendNotification('🧍 ErgoVision Alert', lastSpecificFeedback)
         cooldownUntil = now + lastCooldownSeconds * 1000
         slouchStartTime = now // reset so it can fire again after cooldown
