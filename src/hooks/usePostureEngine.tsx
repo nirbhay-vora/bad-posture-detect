@@ -356,9 +356,14 @@ export function usePostureEngine(
   }, [baseline, startCamera, stopCamera])
 
   useEffect(() => {
-    const saved = localStorage.getItem('ergovision-baseline')
-    if (saved) setBaseline(JSON.parse(saved))
-  }, [])
+    if (externalBaseline) {
+      setBaseline(externalBaseline)
+      localStorage.setItem('ergovision-baseline', JSON.stringify(externalBaseline))
+    } else {
+      const saved = localStorage.getItem('ergovision-baseline')
+      if (saved) setBaseline(JSON.parse(saved))
+    }
+  }, [externalBaseline])
 
   // Cleanup: cancel animation frame when component unmounts
   useEffect(() => {
