@@ -40,7 +40,7 @@ const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
 export function Dashboard() {
   const { settings, updateSettings } = useSettings()
   const { sessions, badEvents, addSession, logBadPostureEvent, clearHistory, worstHour } = usePostureHistory()
-  const { profiles, activeProfile, activeProfileId, addProfile, switchProfile, deleteProfile, updateProfileBaseline } = useProfiles()
+  const { profiles, activeProfile, activeProfileId, addProfile, switchProfile, deleteProfile, renameProfile, updateProfileBaseline, updateProfileUsage, updateProfileMetadata, exportProfiles, importProfiles } = useProfiles()
   const { exportPdf } = usePdfExport()
 
   const [focusUntil, setFocusUntil] = useState<number | null>(null)
@@ -77,7 +77,7 @@ export function Dashboard() {
     resetStats, 
     toggleMonitoring, 
     dismissBreak, setOnBadPostureEvent
-  } = usePostureEngine(settings, activeProfile?.baseline, focusUntil !== null)
+  } = usePostureEngine(settings, activeProfile?.baseline, focusUntil !== null, activeProfileId ? (id: string, time: number) => updateProfileUsage(id, time) : undefined)
 
   const [activeTab, setActiveTab] = useState<Tab>('monitor')
   const [showStretchModal, setShowStretchModal] = useState(false)
@@ -417,6 +417,10 @@ export function Dashboard() {
               onSwitch={switchProfile}
               onAdd={addProfile}
               onDelete={deleteProfile}
+              onUpdateMetadata={updateProfileMetadata}
+              onRename={renameProfile}
+              onExport={exportProfiles}
+              onImport={importProfiles}
             />
           </div>
         )}

@@ -38,7 +38,6 @@ function getCurrentBrightness(): number {
     return MAX_BRIGHTNESS
   }
 }
-
 function setBrightness(value: number) {
   try {
     fs.writeFileSync(BACKLIGHT_PATH, String(value))

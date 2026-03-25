@@ -45,7 +45,8 @@ export interface SessionStats {
 export function usePostureEngine(
   settings: Settings,
   externalBaseline?: Baseline | null,   // Feature 4: injected from active profile
-  isFocusMode: boolean = false
+  isFocusMode: boolean = false,
+  onProfileUsageUpdate?: (profileId: string, additionalTime: number) => void
 ) {
   const landmarkerRef = useRef<PoseLandmarker | null>(null)
   
@@ -66,6 +67,8 @@ export function usePostureEngine(
   const settingsRef = useRef(settings)
   const isMonitoringRef = useRef(true)
   const activeBaselineRef = useRef<Baseline | null>(null)
+  const activeProfileIdRef = useRef<string | null>(null)
+  const usageUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Break reminder
   const sittingStartRef = useRef<number>(Date.now())
@@ -92,6 +95,28 @@ export function usePostureEngine(
   useEffect(() => {
     activeBaselineRef.current = externalBaseline || baseline
   }, [externalBaseline, baseline])
+
+  useEffect(() => {
+    // Update profile usage every 30 seconds when monitoring
+    if (isMonitoring && onProfileUsageUpdate && activeProfileIdRef.current) {
+      usageUpdateIntervalRef.current = setInterval(() => {
+        if (activeProfileIdRef.current) {
+          onProfileUsageUpdate(activeProfileIdRef.current, 30)
+        }
+      }, 30000)
+    } else {
+      if (usageUpdateIntervalRef.current) {
+        clearInterval(usageUpdateIntervalRef.current)
+        usageUpdateIntervalRef.current = null
+      }
+    }
+
+    return () => {
+      if (usageUpdateIntervalRef.current) {
+        clearInterval(usageUpdateIntervalRef.current)
+      }
+    }
+  }, [isMonitoring, onProfileUsageUpdate])
 
   // ─── Step 1: Load the MediaPipe model ───────────────────────────────────────
   useEffect(() => {
